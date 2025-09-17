@@ -23,5 +23,5 @@ total = 0
 for i in range(1, selected_num + 1):
     total += i
 
-st.write(f"선택한 숫자 {selected_num}에 대한 1부터의 합계는 {sum_1_to_n}입니다.")
+st.write(f"선택한 숫자 {selected_num}에 대한 1부터의 합계는 {total}입니다.")
 
