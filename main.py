@@ -218,9 +218,16 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
 
     st.markdown("---")
     # ==========================================
-    # 5 & 6. 최종 모델링 (불균형 문제 해결 버전)
+    # 5 & 6. 최종 모델링 (SMOTE + 확률 분포 확인)
     # ==========================================
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
+
+    # imblearn 라이브러리 체크
+    try:
+        from imblearn.over_sampling import SMOTE
+    except ImportError:
+        st.error("⚠️ 'imbalanced-learn' 라이브러리가 없습니다. 터미널에 `pip install imbalanced-learn`을 입력해서 설치해주세요.")
+        st.stop()
 
     c_final1, c_final2 = st.columns(2)
 
@@ -235,13 +242,16 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     
     test_size = c_final2.slider("Test Size", 0.1, 0.5, 0.2)
 
-    # [NEW] 불균형 해결 옵션
-    st.subheader("⚙️ 모델 하이퍼파라미터 설정")
-    h1, h2 = st.columns(2)
-    use_class_weight = h1.checkbox("Class Weight Balanced 적용", value=True, 
-                                   help="데이터 불균형이 심할 때, 적은 클래스(1)에 가중치를 부여하여 Recall을 높입니다.")
+    st.subheader("⚙️ 불균형 데이터 처리 옵션")
+    h1, h2, h3 = st.columns(3)
+    
+    # 1. SMOTE 사용 여부
+    use_smote = h1.checkbox("SMOTE 오버샘플링 적용", value=True, 
+                            help="가장 강력한 방법입니다. 학습 데이터의 소수 클래스(1)를 가상으로 생성하여 비율을 맞춥니다.")
+    
+    # 2. 임계값 설정
     threshold = h2.slider("분류 임계값 (Threshold)", 0.0, 1.0, 0.5, 0.01,
-                          help="기본값은 0.5입니다. 1(부도)을 더 잘 잡고 싶다면 낮추세요.")
+                          help="확률이 이 값보다 크면 1(부도)로 예측합니다.")
 
     if st.button("모델 학습 및 평가"):
         if not final_features:
@@ -250,38 +260,63 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             X = current_df[final_features]
             y = current_df[target_col]
 
+            # 인코딩
             le_final = LabelEncoder()
             y_encoded_final = le_final.fit_transform(y)
 
+            # 1. Train/Test Split
             X_train, X_test, y_train, y_test = train_test_split(X, y_encoded_final, test_size=test_size, random_state=42)
 
-            # [수정 1] class_weight 옵션 적용
-            cw = 'balanced' if use_class_weight else None
-            model = LogisticRegression(max_iter=3000, class_weight=cw)
-            model.fit(X_train, y_train)
+            # 2. SMOTE 적용 (학습 데이터에만!)
+            if use_smote:
+                smote = SMOTE(random_state=42)
+                X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+                st.info(f"⚡ SMOTE 적용 완료: 학습 데이터가 {len(y_train)}개에서 {len(y_train_res)}개로 증가했습니다. (비율 1:1)")
+            else:
+                X_train_res, y_train_res = X_train, y_train
+
+            # 3. 모델 학습
+            model = LogisticRegression(max_iter=5000) # SMOTE 쓰면 class_weight는 굳이 안써도 됨
+            model.fit(X_train_res, y_train_res)
             
-            # 확률 예측
+            # 4. 예측 (확률값 추출)
             y_proba = model.predict_proba(X_test)[:, 1]
             
-            # [수정 2] 사용자가 설정한 Threshold로 0과 1을 나눔
+            # 5. 사용자 지정 임계값 적용
             y_pred = (y_proba >= threshold).astype(int)
 
+            # --- 결과 출력 ---
             st.subheader("모델 성능")
+            
+            # 실제 Test 데이터에 1이 몇 개인지 확인 (디버깅용)
+            unique, counts = np.unique(y_test, return_counts=True)
+            test_ratio = dict(zip(unique, counts))
+            st.caption(f"📌 검증 데이터(Test Set) 실제 분포: {test_ratio} (여기서 1이 너무 적으면 수치가 잘 안 나올 수 있습니다)")
+
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
             m2.metric("Precision", f"{precision_score(y_test, y_pred, zero_division=0):.4f}")
             m3.metric("Recall", f"{recall_score(y_test, y_pred, zero_division=0):.4f}")
             m4.metric("F1 Score", f"{f1_score(y_test, y_pred, zero_division=0):.4f}")
 
-            # Confusion Matrix 시각화
-            st.subheader("시각화")
-            gc1, gc2 = st.columns(2)
+            # --- 시각화 ---
+            st.subheader("시각화 및 진단")
             
+            # [NEW] 확률 분포 히스토그램 (이게 중요합니다!)
+            st.write("#### 1. 예측 확률 분포 (Probability Histogram)")
+            st.caption("모델이 예측한 확률값들이 어디에 몰려있는지 확인하세요. 빨간선은 현재 설정한 임계값입니다.")
+            
+            fig_hist, ax_hist = plt.subplots(figsize=(10, 3))
+            sns.histplot(y_proba, bins=50, kde=True, ax=ax_hist, color='skyblue')
+            ax_hist.axvline(threshold, color='red', linestyle='--', label=f'Threshold: {threshold}')
+            ax_hist.set_xlabel("Predicted Probability (Score)")
+            ax_hist.legend()
+            st.pyplot(fig_hist)
+            
+            gc1, gc2 = st.columns(2)
             with gc1:
-                st.write("**Confusion Matrix**")
+                st.write("#### 2. Confusion Matrix")
                 cm = confusion_matrix(y_test, y_pred)
-                
-                # 시각화 커스터마이징 (숫자 잘 보이게)
                 fig_cm, ax_cm = plt.subplots()
                 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm, annot_kws={"size": 14})
                 ax_cm.set_xlabel('Predicted Label')
@@ -289,7 +324,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 st.pyplot(fig_cm)
             
             with gc2:
-                st.write("**ROC Curve**")
+                st.write("#### 3. ROC Curve")
                 fpr, tpr, _ = roc_curve(y_test, y_proba)
                 roc_auc = auc(fpr, tpr)
                 fig_roc, ax_roc = plt.subplots()
@@ -297,7 +332,3 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 ax_roc.plot([0,1],[0,1], 'k--')
                 ax_roc.legend()
                 st.pyplot(fig_roc)
-
-            # [팁 제공]
-            if recall_score(y_test, y_pred, zero_division=0) == 0:
-                st.warning("⚠️ 여전히 Recall이 0인가요? '분류 임계값'을 0.3 이하로 낮춰보세요!")
