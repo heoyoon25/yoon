@@ -329,3 +329,104 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 ax_roc.plot([0,1],[0,1], 'k--')
                 ax_roc.legend()
                 st.pyplot(fig_roc)
+
+# ... (ROC Curve 그리는 코드 아래에 추가) ...
+
+            # [중요] 7번 파트에서 쓰기 위해 결과 저장
+            st.session_state['final_model'] = model
+            st.session_state['y_test_final'] = y_test
+            st.session_state['y_proba_final'] = y_proba
+            st.session_state['y_pred_final'] = y_pred
+            
+            # 테스트 데이터의 원래 인덱스를 저장 (원래 데이터프레임에서 정보를 가져오기 위함)
+            st.session_state['X_test_indices'] = X_test.index if hasattr(X_test, 'index') else range(len(X_test))
+            
+            st.success("✅ 모델과 예측 결과가 저장되었습니다. 이제 7번 파트를 실행할 수 있습니다!")
+            st.markdown("---")
+    # ==========================================
+    # 7. 전략 수립 및 결과 시각화 (Segmentation)
+    # ==========================================
+    st.header("7. 고객 세분화 및 전략 수립 (Strategy & Visualization)")
+
+    if 'y_proba_final' not in st.session_state:
+        st.warning("⚠️ 먼저 위 5&6번 단계에서 '모델 학습 및 평가' 버튼을 눌러주세요.")
+    else:
+        # 데이터 가져오기
+        y_proba = st.session_state['y_proba_final']
+        y_test = st.session_state['y_test_final']
+        
+        # 데이터프레임 생성
+        res_df = pd.DataFrame({
+            'Actual_Default': y_test,
+            'Prob_Default': y_proba
+        })
+
+        st.subheader("📋 고객 등급 세분화 (Customer Segmentation)")
+        
+        # 사용자가 기준 설정 가능하게 슬라이더 제공
+        c_seg1, c_seg2 = st.columns(2)
+        safe_cut = c_seg1.slider("우량 고객 기준 (확률 < X)", 0.0, 0.5, 0.2, 0.05, help="이 확률보다 낮으면 우량 고객으로 분류")
+        danger_cut = c_seg2.slider("고위험 고객 기준 (확률 > X)", 0.5, 1.0, 0.6, 0.05, help="이 확률보다 높으면 위험 고객으로 분류")
+
+        # 세분화 로직 함수
+        def segment_customer(prob):
+            if prob < safe_cut: return "Grade A (우량)"
+            elif prob > danger_cut: return "Grade C (고위험)"
+            else: return "Grade B (중립)"
+
+        res_df['Segment'] = res_df['Prob_Default'].apply(segment_customer)
+
+        # 1. 세그먼트별 통계 요약
+        summary = res_df.groupby('Segment').agg(
+            Customer_Count=('Prob_Default', 'count'),
+            Avg_Prob=('Prob_Default', 'mean'),
+            Actual_Default_Rate=('Actual_Default', 'mean')
+        ).reset_index()
+
+        # 전략 텍스트 매핑
+        strategy_map = {
+            "Grade A (우량)": "✅ 금리 인하, 한도 증액 제안, 교차 판매(Cross-sell) 시도",
+            "Grade B (중립)": "⚠️ 정기적인 모니터링, 신규 대출 시 심사 강화",
+            "Grade C (고위험)": "🚫 대출 거절/축소, 조기 상환 유도, 집중 관리 대상"
+        }
+        summary['Action_Plan'] = summary['Segment'].map(strategy_map)
+
+        st.table(summary.style.format({
+            "Avg_Prob": "{:.2%}",
+            "Actual_Default_Rate": "{:.2%}"
+        }))
+
+        # 2. 시각화 대시보드
+        st.subheader("📊 전략 시각화 대시보드")
+        
+        row1_1, row1_2 = st.columns(2)
+
+        # 그래프 1: 세그먼트 비율 (Pie Chart)
+        with row1_1:
+            st.markdown("**1. 고객 등급별 분포**")
+            fig1, ax1 = plt.subplots(figsize=(6, 4))
+            segment_counts = res_df['Segment'].value_counts().sort_index()
+            # 색상 설정 (우량:파랑, 중립:회색, 위험:빨강)
+            colors = {'Grade A (우량)': '#66b3ff', 'Grade B (중립)': '#999999', 'Grade C (고위험)': '#ff9999'}
+            col_list = [colors.get(x, '#cccccc') for x in segment_counts.index]
+            
+            ax1.pie(segment_counts, labels=segment_counts.index, autopct='%1.1f%%', colors=col_list, startangle=90)
+            st.pyplot(fig1)
+
+        # 그래프 2: 리스크 등급별 부도 확률 분포 (Box Plot)
+        with row1_2:
+            st.markdown("**2. 등급별 예측 부실률 분포**")
+            fig2, ax2 = plt.subplots(figsize=(6, 4))
+            sns.boxplot(x='Segment', y='Prob_Default', data=res_df.sort_values('Segment'), palette="Set2", ax=ax2)
+            ax2.set_ylabel("Predicted Probability")
+            st.pyplot(fig2)
+
+        st.markdown("---")
+        
+        # 3. 비즈니스 임팩트 (Lift Chart 개념)
+        st.subheader("📈 모델의 비즈니스 임팩트")
+        st.info(f"""
+        **해석 가이드:**
+        * **Grade A (우량)** 그룹은 실제 부실률이 **{summary.loc[summary['Segment']=='Grade A (우량)', 'Actual_Default_Rate'].values[0]:.1%}**로 매우 낮습니다. 이들에게는 공격적인 마케팅이 가능합니다.
+        * **Grade C (고위험)** 그룹을 미리 걸러낸다면, 전체 부실 채권의 상당 부분을 사전에 방지할 수 있습니다.
+        """)
