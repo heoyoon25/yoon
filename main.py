@@ -1,255 +1,292 @@
 import streamlit as st
 import pandas as pd
-import seaborn as sns
+import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from scipy import stats
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
-                             f1_score, confusion_matrix, roc_curve, auc, classification_report)
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, roc_curve, auc, ConfusionMatrixDisplay
+)
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from sklearn.feature_selection import SequentialFeatureSelector
 
-# --------------------------------------------------------------------------------
-# 1. 기본 설정 및 세션 초기화
-# --------------------------------------------------------------------------------
-st.set_page_config(page_title="Logistic Regression App", layout="wide")
+# 페이지 기본 설정
+st.set_page_config(page_title="로짓 모형 분석기", layout="wide")
 
-# 한글 폰트 설정 (필요시 운영체제에 맞게 주석 해제하여 사용)
-plt.rc('font', family='Malgun Gothic') # Windows 예시
-plt.rc('axes', unicode_minus=False)
+st.title("📊 Logistic Regression Modeling Tool")
+st.markdown("---")
 
-# 세션 상태 초기화
+# 세션 상태 초기화 (데이터 유지용)
 if 'df' not in st.session_state:
     st.session_state['df'] = None
-if 'df_processed' not in st.session_state:
-    st.session_state['df_processed'] = None
-if 'target_col' not in st.session_state:
-    st.session_state['target_col'] = None
-if 'selected_features' not in st.session_state:
-    st.session_state['selected_features'] = []
 
-# 사이드바 메뉴
-st.sidebar.title("분석 단계")
-menu = ["1. 데이터 업로드", "2. 데이터 탐색 및 시각화", "3. 데이터 전처리 (T-test)", "4. 모형 구축 및 평가"]
-choice = st.sidebar.radio("메뉴를 선택하세요", menu)
+# ==========================================
+# 1. 데이터 업로드
+# ==========================================
+st.header("1. 데이터 업로드")
+uploaded_file = st.file_uploader("CSV 파일을 업로드하세요", type=["csv"])
 
-# --------------------------------------------------------------------------------
-# [PAGE 1] 데이터 업로드
-# --------------------------------------------------------------------------------
-if choice == "1. 데이터 업로드":
-    st.title("📂 데이터 업로드")
+if uploaded_file is not None:
+    st.session_state['df'] = pd.read_csv(uploaded_file)
+    st.success("데이터 업로드 성공!")
+    st.dataframe(st.session_state['df'].head())
+
+# 데이터가 있을 경우에만 이후 단계 진행
+if st.session_state['df'] is not None:
+    df = st.session_state['df']
+
+    st.markdown("---")
+    # ==========================================
+    # 2. 데이터 탐색 및 시각화
+    # ==========================================
+    st.header("2. 데이터 탐색 및 시각화 (EDA)")
+
+    # 2-1. T-test (p-value <= 0.05)
+    st.subheader("가설 검정 (T-test)")
+    st.caption("이진 그룹(0/1 등)에 따른 수치형 변수의 평균 차이를 검정합니다.")
     
-    uploaded_file = st.file_uploader("CSV 파일을 업로드하세요", type=["csv"])
-    
-    if uploaded_file is not None:
+    col1, col2 = st.columns(2)
+    with col1:
+        group_col = st.selectbox("그룹 변수 (이진 범주형)", df.columns, key='ttest_group')
+    with col2:
+        target_num_col = st.selectbox("검정할 수치형 변수", df.select_dtypes(include=np.number).columns, key='ttest_val')
+
+    if st.button("T-test 실행"):
         try:
-            df = pd.read_csv(uploaded_file)
-            st.session_state['df'] = df
-            st.success("데이터 로드 성공!")
-            st.write(f"데이터 크기: {df.shape[0]} 행, {df.shape[1]} 열")
-            st.dataframe(df.head())
-        except Exception as e:
-            st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
-            
-    elif st.session_state['df'] is not None:
-        st.info("이미 업로드된 데이터가 있습니다.")
-        st.dataframe(st.session_state['df'].head())
-
-# --------------------------------------------------------------------------------
-# [PAGE 2] 데이터 탐색 및 시각화
-# --------------------------------------------------------------------------------
-elif choice == "2. 데이터 탐색 및 시각화":
-    st.title("🔍 데이터 탐색 및 시각화")
-    
-    if st.session_state['df'] is None:
-        st.warning("먼저 '1. 데이터 업로드' 메뉴에서 데이터를 업로드해주세요.")
-    else:
-        df = st.session_state['df']
-        
-        st.subheader("1. 기술 통계량")
-        st.dataframe(df.describe())
-        
-        st.subheader("2. 그래프 시각화")
-        col1, col2 = st.columns([1, 3])
-        
-        with col1:
-            viz_type = st.selectbox("그래프 유형", ["Histogram", "Box Plot", "Scatter Plot", "Bar Chart"])
-            x_col = st.selectbox("X축 변수", df.columns)
-            y_col = st.selectbox("Y축 변수 (선택)", [None] + list(df.columns))
-            
-        with col2:
-            fig, ax = plt.subplots(figsize=(10, 5))
-            try:
-                if viz_type == "Histogram":
-                    sns.histplot(data=df, x=x_col, kde=True, ax=ax)
-                elif viz_type == "Box Plot":
-                    sns.boxplot(data=df, x=x_col, y=y_col, ax=ax)
-                elif viz_type == "Scatter Plot":
-                    if y_col: sns.scatterplot(data=df, x=x_col, y=y_col, ax=ax)
-                    else: st.warning("Scatter Plot은 Y축 변수가 필요합니다.")
-                elif viz_type == "Bar Chart":
-                    if y_col: sns.barplot(data=df, x=x_col, y=y_col, ax=ax)
-                    else: df[x_col].value_counts().plot(kind='bar', ax=ax)
+            groups = df[group_col].unique()
+            if len(groups) != 2:
+                st.error("그룹 변수는 정확히 2개의 고유값(예: 0과 1)을 가져야 합니다.")
+            else:
+                group_a = df[df[group_col] == groups[0]][target_num_col]
+                group_b = df[df[group_col] == groups[1]][target_num_col]
                 
-                st.pyplot(fig)
-            except Exception as e:
-                st.error(f"그래프 오류: {e}")
+                t_stat, p_val = stats.ttest_ind(group_a, group_b, equal_var=False) # Welch's t-test
+                
+                st.write(f"**T-statistic:** {t_stat:.4f}, **P-value:** {p_val:.4f}")
+                
+                if p_val <= 0.05:
+                    st.success(f"P-value가 {p_val:.4f}로 0.05 이하입니다. 유의미한 차이가 있습니다.")
+                else:
+                    st.warning(f"P-value가 {p_val:.4f}로 0.05보다 큽니다. 유의미한 차이가 없습니다.")
+        except Exception as e:
+            st.error(f"오류 발생: {e}")
 
-# --------------------------------------------------------------------------------
-# [PAGE 3] 데이터 전처리 (T-test 변수 선택)
-# --------------------------------------------------------------------------------
-elif choice == "3. 데이터 전처리 (T-test)":
-    st.title("⚙️ 데이터 전처리 및 변수 선택")
+    # 2-2. 시각화
+    st.subheader("그래프 시각화")
+    v_col1, v_col2, v_col3 = st.columns(3)
     
-    if st.session_state['df'] is None:
-        st.warning("먼저 데이터를 업로드해주세요.")
-    else:
-        df = st.session_state['df'].copy()
+    with v_col1:
+        x_axis = st.selectbox("X축 선택", df.columns)
+    with v_col2:
+        y_axis = st.selectbox("Y축 선택 (필요 시)", [None] + list(df.columns))
+    with v_col3:
+        plot_type = st.selectbox("그래프 유형", 
+                                 ["Histogram", "Box Plot", "Scatter Plot", "Bar Chart", "Line Chart"])
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    try:
+        if plot_type == "Histogram":
+            sns.histplot(data=df, x=x_axis, kde=True, ax=ax)
+        elif plot_type == "Box Plot":
+            sns.boxplot(data=df, x=x_axis, y=y_axis, ax=ax)
+        elif plot_type == "Scatter Plot":
+            if y_axis:
+                sns.scatterplot(data=df, x=x_axis, y=y_axis, ax=ax)
+            else:
+                st.warning("Scatter Plot은 Y축 선택이 필요합니다.")
+        elif plot_type == "Bar Chart":
+            if y_axis:
+                sns.barplot(data=df, x=x_axis, y=y_axis, ax=ax)
+            else:
+                st.countplot(data=df, x=x_axis, ax=ax)
+        elif plot_type == "Line Chart":
+            if y_axis:
+                sns.lineplot(data=df, x=x_axis, y=y_axis, ax=ax)
+            else:
+                st.warning("Line Chart는 Y축 선택이 필요합니다.")
+        
+        st.pyplot(fig)
+    except Exception as e:
+        st.error(f"그래프를 그리는 중 오류가 발생했습니다: {e}")
+
+    st.markdown("---")
+    # ==========================================
+    # 3. 데이터 전처리
+    # ==========================================
+    st.header("3. 데이터 전처리")
+    
+    # 전처리 옵션 선택
+    col_p1, col_p2, col_p3 = st.columns(3)
+    with col_p1:
+        handle_na = st.checkbox("결측치 제거 (Drop NA)")
+    with col_p2:
+        do_scaling = st.checkbox("특성 스케일링 (StandardScaler)")
+    with col_p3:
+        do_encoding = st.checkbox("원-핫 인코딩 (범주형 변수 변환)")
+
+    if st.button("데이터 전처리 적용"):
+        df_processed = df.copy()
         
         # 1. 결측치 처리
-        st.subheader("1. 결측치 처리")
-        # 간단하게 숫자형은 평균, 범주형은 최빈값으로 채움
-        num_cols = df.select_dtypes(include=['number']).columns
-        cat_cols = df.select_dtypes(include=['object']).columns
-        
-        if len(num_cols) > 0:
-            imputer_num = SimpleImputer(strategy='mean')
-            df[num_cols] = imputer_num.fit_transform(df[num_cols])
-        if len(cat_cols) > 0:
-            imputer_cat = SimpleImputer(strategy='most_frequent')
-            df[cat_cols] = imputer_cat.fit_transform(df[cat_cols])
-            
-        st.write("결측치 처리가 완료되었습니다.")
+        if handle_na:
+            df_processed = df_processed.dropna()
+            st.info("결측치를 제거했습니다.")
 
-        # 2. 타겟 변수 선택
-        st.subheader("2. 타겟 변수(Y) 설정")
-        target_col = st.selectbox("분석할 타겟 변수(Target)를 선택하세요", df.columns)
-        st.session_state['target_col'] = target_col
+        # 2. 원-핫 인코딩 (수치형이 아닌 컬럼 대상)
+        if do_encoding:
+            cat_cols = df_processed.select_dtypes(include=['object', 'category']).columns
+            if len(cat_cols) > 0:
+                df_processed = pd.get_dummies(df_processed, columns=cat_cols, drop_first=True)
+                st.info(f"원-핫 인코딩 완료: {list(cat_cols)}")
         
-        # 타겟 인코딩 (문자열일 경우 숫자로 변환)
-        if df[target_col].dtype == 'object':
-            le = LabelEncoder()
-            df[target_col] = le.fit_transform(df[target_col])
-            st.info(f"타겟 변수 '{target_col}'가 수치형으로 인코딩되었습니다.")
+        # 3. 스케일링 (수치형 컬럼 대상, 타겟 변수는 제외해야 하므로 주의 필요 - 여기서는 전체 적용 후 모델링 단계에서 분리 권장하지만, 단순화를 위해 수치형만 변환)
+        if do_scaling:
+            num_cols = df_processed.select_dtypes(include=np.number).columns
+            scaler = StandardScaler()
+            df_processed[num_cols] = scaler.fit_transform(df_processed[num_cols])
+            st.info("스케일링(StandardScaler)을 적용했습니다.")
 
-        # 3. T-test 기반 변수 선택
-        st.subheader("3. T-test 기반 변수 선택 (P-value <= 0.05)")
-        
-        if st.button("T-test 변수 선택 실행"):
-            # 타겟 클래스 확인 (이진 분류 가정)
-            unique_targets = df[target_col].unique()
-            
-            if len(unique_targets) == 2:
-                group0 = df[df[target_col] == unique_targets[0]]
-                group1 = df[df[target_col] == unique_targets[1]]
-                
-                # 수치형 변수만 추출 (타겟 제외)
-                candidate_features = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
-                if target_col in candidate_features:
-                    candidate_features.remove(target_col)
-                
-                selected_features = []
-                results = []
-                
-                for col in candidate_features:
-                    val0 = group0[col]
-                    val1 = group1[col]
-                    
-                    # T-test 수행 (이분산 가정 equal_var=False)
-                    t_stat, p_val = stats.ttest_ind(val0, val1, equal_var=False)
-                    
-                    is_select = p_val <= 0.05
-                    results.append({'Variable': col, 'P-value': p_val, 'Selected': is_select})
-                    
-                    if is_select:
-                        selected_features.append(col)
-                
-                # 결과 출력
-                res_df = pd.DataFrame(results)
-                st.dataframe(res_df.style.applymap(lambda x: 'background-color: lightgreen' if x is True else '', subset=['Selected']))
-                
-                if len(selected_features) > 0:
-                    st.success(f"P-value 0.05 이하인 변수 {len(selected_features)}개가 선택되었습니다.")
-                    st.write(f"**선택된 변수 목록:** {selected_features}")
-                    
-                    # 선택된 변수 + 타겟만 저장
-                    st.session_state['selected_features'] = selected_features
-                    st.session_state['df_processed'] = df[selected_features + [target_col]]
-                else:
-                    st.error("조건을 만족하는 변수가 하나도 없습니다. 데이터를 확인하세요.")
-                    st.session_state['df_processed'] = None
-            else:
-                st.error("타겟 변수의 클래스가 2개가 아닙니다. (이진 분류 문제에서만 T-test 적용 가능)")
+        # 전처리된 데이터를 세션에 업데이트
+        st.session_state['df_processed'] = df_processed
+        st.success("전처리 완료!")
+        st.write(st.session_state['df_processed'].head())
 
-# --------------------------------------------------------------------------------
-# [PAGE 4] 모형 구축 및 평가
-# --------------------------------------------------------------------------------
-elif choice == "4. 모형 구축 및 평가":
-    st.title("🤖 모형 구축 및 평가")
+    # 전처리된 데이터가 있으면 그것을 사용, 없으면 원본 사용
+    current_df = st.session_state.get('df_processed', df)
+
+    st.markdown("---")
+    # ==========================================
+    # 5. 데이터 나누기 & 변수 선택 (순서 조정: 선택 후 Stepwise 적용)
+    # ==========================================
+    st.header("4 & 5. 변수 선택 및 데이터 나누기")
     
-    if st.session_state['df_processed'] is None:
-        st.warning("먼저 '3. 데이터 전처리' 단계에서 변수 선택을 완료해주세요.")
-    else:
-        df_final = st.session_state['df_processed']
-        target_col = st.session_state['target_col']
-        features = st.session_state['selected_features']
-        
-        st.write(f"**학습에 사용되는 변수 ({len(features)}개):** {features}")
-        
-        # X, y 분리
-        X = df_final[features]
-        y = df_final[target_col]
-        
-        # Train/Test 분리
-        test_size = st.slider("테스트 데이터 비율", 0.1, 0.5, 0.2)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
-        
-        # 스케일링 (로지스틱 회귀 성능 향상)
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_test_scaled = scaler.transform(X_test)
-        
-        if st.button("모델 학습 시작"):
-            # 로지스틱 회귀 모델 학습
-            model = LogisticRegression(max_iter=1000)
-            model.fit(X_train_scaled, y_train)
+    # 타겟 변수 선택
+    target_col = st.selectbox("종속 변수 (Target) 선택", current_df.columns)
+    
+    # 독립 변수 후보군 선택
+    feature_candidates = [c for c in current_df.columns if c != target_col]
+    selected_features = st.multiselect("독립 변수 (Features) 선택", feature_candidates, default=feature_candidates)
+
+    # 4. 특성 선택 (Stepwise Selection - Forward)
+    st.subheader("4. 특성 선택 (Stepwise Selection - Forward)")
+    
+    if st.button("전진 선택법(Forward Stepwise) 실행"):
+        if not selected_features:
+            st.warning("먼저 독립 변수를 선택해주세요.")
+        else:
+            X_temp = current_df[selected_features]
+            y_temp = current_df[target_col]
             
-            y_pred = model.predict(X_test_scaled)
-            y_proba = model.predict_proba(X_test_scaled)[:, 1]
-            
-            # 평가 지표
-            st.subheader("1. 성능 평가 지표")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
-            col2.metric("Precision", f"{precision_score(y_test, y_pred, zero_division=0):.4f}")
-            col3.metric("Recall", f"{recall_score(y_test, y_pred, zero_division=0):.4f}")
-            col4.metric("F1 Score", f"{f1_score(y_test, y_pred, zero_division=0):.4f}")
-            
-            # 혼동 행렬
-            st.subheader("2. 혼동 행렬 (Confusion Matrix)")
-            cm = confusion_matrix(y_test, y_pred)
-            fig_cm, ax_cm = plt.subplots(figsize=(6, 4))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm)
-            ax_cm.set_xlabel('Predicted')
-            ax_cm.set_ylabel('Actual')
-            st.pyplot(fig_cm)
-            
-            # ROC 커브
-            st.subheader("3. ROC Curve")
-            if len(y.unique()) == 2:
-                fpr, tpr, _ = roc_curve(y_test, y_proba)
-                roc_auc = auc(fpr, tpr)
+            # y가 연속형이면 안되므로 라벨 인코딩 체크 (로지스틱 회귀용)
+            if y_temp.dtype == 'object':
+                le = LabelEncoder()
+                y_temp = le.fit_transform(y_temp)
+
+            try:
+                model = LogisticRegression(solver='liblinear')
+                # n_features_to_select='auto'로 두면 절반 정도를 선택함. 여기선 50% 선택으로 설정
+                sfs = SequentialFeatureSelector(model, direction='forward', n_features_to_select='auto', tol=None)
                 
-                fig_roc, ax_roc = plt.subplots(figsize=(6, 4))
-                ax_roc.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
-                ax_roc.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-                ax_roc.set_xlim([0.0, 1.0])
-                ax_roc.set_ylim([0.0, 1.05])
-                ax_roc.set_xlabel('False Positive Rate')
-                ax_roc.set_ylabel('True Positive Rate')
-                ax_roc.set_title('Receiver Operating Characteristic')
-                ax_roc.legend(loc="lower right")
-                st.pyplot(fig_roc)
+                with st.spinner("최적의 변수를 찾는 중입니다..."):
+                    sfs.fit(X_temp, y_temp)
+                
+                selected_mask = sfs.get_support()
+                suggested_features = np.array(selected_features)[selected_mask]
+                
+                st.success(f"선택된 변수 ({len(suggested_features)}개): {', '.join(suggested_features)}")
+                # 선택된 변수로 업데이트할지 여부는 사용자 판단에 맡기거나 자동으로 multiselect에 반영할 수 있음
+                st.info("위 변수들을 참고하여 아래 '최종 변수 선택'을 조정하세요.")
+            
+            except Exception as e:
+                st.error(f"Stepwise 실행 중 오류: {e}")
+
+    # 데이터 나누기 설정
+    st.subheader("5. 데이터 분할 설정")
+    test_size = st.slider("테스트 데이터 비율 (Test Size)", 0.1, 0.5, 0.2)
+
+    st.markdown("---")
+    # ==========================================
+    # 6. 모형 구축 및 평가
+    # ==========================================
+    st.header("6. 모형 구축 및 평가")
+
+    if st.button("로지스틱 회귀 모델 학습 시작"):
+        if not selected_features:
+            st.error("독립 변수를 하나 이상 선택해야 합니다.")
+        else:
+            # 데이터 준비
+            X = current_df[selected_features]
+            y = current_df[target_col]
+
+            # 타겟 변수 인코딩 (필요 시)
+            if y.dtype == 'object' or y.dtype.name == 'category':
+                le = LabelEncoder()
+                y = le.fit_transform(y)
             else:
-                st.info("이진 분류가 아니어서 ROC Curve를 그릴 수 없습니다.")
+                # 0과 1인지 확인, 아니면 변환 시도
+                if len(np.unique(y)) > 2:
+                     st.warning("경고: 종속 변수의 클래스가 2개 이상입니다. 다중 분류(Multinomial)로 처리됩니다.")
+                y = y.astype(int)
+
+            # Train/Test Split
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=42)
+
+            # 모델 학습
+            model = LogisticRegression(max_iter=1000)
+            model.fit(X_train, y_train)
+            
+            # 예측
+            y_pred = model.predict(X_test)
+            y_proba = model.predict_proba(X_test)
+            
+            # 이진 분류일 경우 확률의 두 번째 컬럼(Class 1) 사용
+            if y_proba.shape[1] == 2:
+                y_proba = y_proba[:, 1]
+            
+            # 6-1. 평가지표 출력
+            st.subheader("모델 성능 지표")
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            
+            # Average 매개변수는 이진 분류 기본값인 'binary' 사용하되, 다중 분류일 경우 'weighted' 적용
+            avg_method = 'binary' if len(np.unique(y)) == 2 else 'weighted'
+            
+            col_m1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
+            col_m2.metric("Precision", f"{precision_score(y_test, y_pred, average=avg_method):.4f}")
+            col_m3.metric("Recall", f"{recall_score(y_test, y_pred, average=avg_method):.4f}")
+            col_m4.metric("F1 Score", f"{f1_score(y_test, y_pred, average=avg_method):.4f}")
+
+            # 6-2. 시각화 (ROC, Confusion Matrix)
+            st.subheader("모델 평가 시각화")
+            plot_col1, plot_col2 = st.columns(2)
+
+            # Confusion Matrix
+            with plot_col1:
+                st.write("**Confusion Matrix**")
+                cm = confusion_matrix(y_test, y_pred)
+                fig_cm, ax_cm = plt.subplots()
+                disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+                disp.plot(cmap='Blues', ax=ax_cm)
+                st.pyplot(fig_cm)
+
+            # ROC Curve (이진 분류인 경우에만)
+            with plot_col2:
+                st.write("**ROC Curve**")
+                if len(np.unique(y)) == 2:
+                    fpr, tpr, thresholds = roc_curve(y_test, y_proba)
+                    roc_auc = auc(fpr, tpr)
+                    
+                    fig_roc, ax_roc = plt.subplots()
+                    ax_roc.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+                    ax_roc.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+                    ax_roc.set_xlim([0.0, 1.0])
+                    ax_roc.set_ylim([0.0, 1.05])
+                    ax_roc.set_xlabel('False Positive Rate')
+                    ax_roc.set_ylabel('True Positive Rate')
+                    ax_roc.legend(loc="lower right")
+                    st.pyplot(fig_roc)
+                else:
+                    st.info("다중 분류 문제에서는 ROC Curve가 단순 2차원 플롯으로 제공되지 않습니다.")
