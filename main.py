@@ -422,11 +422,3 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             st.pyplot(fig2)
 
         st.markdown("---")
-        
-        # 3. 비즈니스 임팩트 (Lift Chart 개념)
-        st.subheader("📈 모델의 비즈니스 임팩트")
-        st.info(f"""
-        **해석 가이드:**
-        * **Grade A (우량)** 그룹은 실제 부실률이 **{summary.loc[summary['Segment']=='Grade A (우량)', 'Actual_Default_Rate'].values[0]:.1%}**로 매우 낮습니다. 이들에게는 공격적인 마케팅이 가능합니다.
-        * **Grade C (고위험)** 그룹을 미리 걸러낸다면, 전체 부실 채권의 상당 부분을 사전에 방지할 수 있습니다.
-        """)
