@@ -6,5 +6,5 @@ matplotlib
 seaborn
 plotly
 graphviz
-scikit-learn
-imbalanced-learn>=0.11.0
+scikit-learn==1.5.2
+imbalanced-learn==0.12.4
