@@ -215,9 +215,10 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             except Exception as e:
                 st.error(f"오류 발생: {e}")
 
+
     st.markdown("---")
     # ==========================================
-    # 5 & 6. 최종 모델링 - Stepwise 연동
+    # 5 & 6. 최종 모델링 (불균형 문제 해결 버전)
     # ==========================================
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
 
@@ -234,6 +235,14 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     
     test_size = c_final2.slider("Test Size", 0.1, 0.5, 0.2)
 
+    # [NEW] 불균형 해결 옵션
+    st.subheader("⚙️ 모델 하이퍼파라미터 설정")
+    h1, h2 = st.columns(2)
+    use_class_weight = h1.checkbox("Class Weight Balanced 적용", value=True, 
+                                   help="데이터 불균형이 심할 때, 적은 클래스(1)에 가중치를 부여하여 Recall을 높입니다.")
+    threshold = h2.slider("분류 임계값 (Threshold)", 0.0, 1.0, 0.5, 0.01,
+                          help="기본값은 0.5입니다. 1(부도)을 더 잘 잡고 싶다면 낮추세요.")
+
     if st.button("모델 학습 및 평가"):
         if not final_features:
             st.error("변수를 선택하세요.")
@@ -246,11 +255,16 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
 
             X_train, X_test, y_train, y_test = train_test_split(X, y_encoded_final, test_size=test_size, random_state=42)
 
-            model = LogisticRegression(max_iter=3000)
+            # [수정 1] class_weight 옵션 적용
+            cw = 'balanced' if use_class_weight else None
+            model = LogisticRegression(max_iter=3000, class_weight=cw)
             model.fit(X_train, y_train)
             
-            y_pred = model.predict(X_test)
+            # 확률 예측
             y_proba = model.predict_proba(X_test)[:, 1]
+            
+            # [수정 2] 사용자가 설정한 Threshold로 0과 1을 나눔
+            y_pred = (y_proba >= threshold).astype(int)
 
             st.subheader("모델 성능")
             m1, m2, m3, m4 = st.columns(4)
@@ -259,15 +273,21 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             m3.metric("Recall", f"{recall_score(y_test, y_pred, zero_division=0):.4f}")
             m4.metric("F1 Score", f"{f1_score(y_test, y_pred, zero_division=0):.4f}")
 
+            # Confusion Matrix 시각화
             st.subheader("시각화")
             gc1, gc2 = st.columns(2)
+            
             with gc1:
                 st.write("**Confusion Matrix**")
                 cm = confusion_matrix(y_test, y_pred)
-                disp = ConfusionMatrixDisplay(cm)
+                
+                # 시각화 커스터마이징 (숫자 잘 보이게)
                 fig_cm, ax_cm = plt.subplots()
-                disp.plot(cmap='Blues', ax=ax_cm)
+                sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax_cm, annot_kws={"size": 14})
+                ax_cm.set_xlabel('Predicted Label')
+                ax_cm.set_ylabel('True Label')
                 st.pyplot(fig_cm)
+            
             with gc2:
                 st.write("**ROC Curve**")
                 fpr, tpr, _ = roc_curve(y_test, y_proba)
@@ -277,3 +297,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 ax_roc.plot([0,1],[0,1], 'k--')
                 ax_roc.legend()
                 st.pyplot(fig_roc)
+
+            # [팁 제공]
+            if recall_score(y_test, y_pred, zero_division=0) == 0:
+                st.warning("⚠️ 여전히 Recall이 0인가요? '분류 임계값'을 0.3 이하로 낮춰보세요!")
