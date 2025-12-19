@@ -225,8 +225,8 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     # imblearn 라이브러리 체크
     try:
         from imblearn.over_sampling import SMOTE
-    except ImportError:
-        st.error("⚠️ 'imbalanced-learn' 라이브러리가 없습니다. 터미널에 `pip install imbalanced-learn`을 입력해서 설치해주세요.")
+    except Exception as e:
+        st.error(f"⚠️ 라이브러리 로드 오류 발생: {e}")
         st.stop()
 
     c_final1, c_final2 = st.columns(2)
