@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SequentialFeatureSelector
 
 # 페이지 설정
-st.set_page_config(page_title="로짓 모형 분석기 (T-test Linked)", layout="wide")
+st.set_page_config(page_title="로짓 모형 분석", layout="wide")
 
 st.title("📊 Logistic Regression Tool (T-test -> Stepwise Link)")
 st.markdown("---")
