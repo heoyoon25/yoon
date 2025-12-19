@@ -223,11 +223,14 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
 
     # imblearn 라이브러리 체크
+    # ... import 부분 ...
     try:
         from imblearn.over_sampling import SMOTE
-    except Exception as e:
-        st.error(f"⚠️ 라이브러리 로드 오류 발생: {e}")
+    except ImportError:
+        st.error("⚠️ imbalanced-learn 설치 오류가 해결되지 않았습니다.")
         st.stop()
+
+# ... 나머지 코드 ...
 
     c_final1, c_final2 = st.columns(2)
 
