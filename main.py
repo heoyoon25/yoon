@@ -14,18 +14,20 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SequentialFeatureSelector
 
 # 페이지 설정
-st.set_page_config(page_title="로짓 모형 분석기 (Auto Selection)", layout="wide")
+st.set_page_config(page_title="로짓 모형 분석기 (T-test Linked)", layout="wide")
 
-st.title("📊 Logistic Regression Tool (Auto Stepwise Link)")
+st.title("📊 Logistic Regression Tool (T-test -> Stepwise Link)")
 st.markdown("---")
 
 # ==========================================
-# 세션 상태 초기화 (데이터 및 자동 선택 변수 저장용)
+# 세션 상태 초기화
 # ==========================================
 if 'df' not in st.session_state:
     st.session_state['df'] = None
 if 'recommended_features' not in st.session_state:
     st.session_state['recommended_features'] = [] # Stepwise 결과 저장용
+if 'significant_features' not in st.session_state:
+    st.session_state['significant_features'] = [] # T-test 결과 저장용 (NEW)
 
 # ==========================================
 # 1. 데이터 업로드
@@ -40,38 +42,33 @@ if uploaded_file is not None:
     # 데이터 미리보기
     st.dataframe(st.session_state['df'].head())
     
-    # not.fully.paid 컬럼 존재 여부 확인
     if 'not.fully.paid' not in st.session_state['df'].columns:
-        st.error("⚠️ 경고: 업로드된 데이터에 'not.fully.paid' 변수가 없습니다. 컬럼명을 확인해주세요.")
+        st.error("⚠️ 경고: 업로드된 데이터에 'not.fully.paid' 변수가 없습니다.")
 
 # 데이터가 있을 때만 실행
 if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['df'].columns:
     df = st.session_state['df']
-    
-    # [중요] 종속 변수 고정
     target_col = 'not.fully.paid'
 
     st.markdown("---")
     # ==========================================
-    # 2. 데이터 탐색 및 시각화
+    # 2. 데이터 탐색 (T-test 로직 수정됨)
     # ==========================================
     st.header("2. 데이터 탐색 및 시각화 (EDA)")
 
-    # 2-1. T-test (자동)
     st.subheader(f"가설 검정 (Target: {target_col} 기준)")
-    st.caption(f"'{target_col}'(0/1)에 따라 평균 차이가 유의미한(p<=0.05) 변수만 추출합니다.")
+    st.caption(f"'{target_col}'(0/1)에 따라 평균 차이가 유의미한(p<=0.05) 변수만 추출하여 **Stepwise 후보로 등록합니다.**")
 
     if st.button("유의한 변수 찾기 (T-test)"):
-        # 그룹 변수는 고정된 target_col 사용
         if df[target_col].nunique() != 2:
             st.error(f"오류: '{target_col}' 변수의 값이 2개(0과 1)가 아닙니다.")
         else:
-            # 수치형 변수만 선택 (Target 제외)
             numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
             if target_col in numeric_cols:
                 numeric_cols.remove(target_col)
             
             significant_vars = []
+            sig_names_temp = [] # 변수명만 저장할 리스트
             groups = df[target_col].unique()
             
             for col in numeric_cols:
@@ -87,36 +84,34 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                             "T-statistic": round(t_stat, 4),
                             "P-value": round(p_val, 5)
                         })
+                        sig_names_temp.append(col)
                 except:
                     pass
 
             if significant_vars:
-                st.success(f"유의미한 변수 {len(significant_vars)}개 발견")
+                # [핵심] 발견된 유의미한 변수들을 세션에 저장
+                st.session_state['significant_features'] = sig_names_temp
+                
+                st.success(f"유의미한 변수 {len(significant_vars)}개 발견 및 저장 완료!")
                 st.dataframe(pd.DataFrame(significant_vars))
+                st.info("👇 이 변수들이 4번 Stepwise 선택 단계의 '후보 변수'로 자동 설정됩니다.")
             else:
                 st.warning("P-value <= 0.05인 변수가 없습니다.")
+                st.session_state['significant_features'] = []
 
     st.markdown("---")
-
-    # 2-2. 시각화
+    # 2-2. 시각화 (생략 없이 유지)
     st.subheader("그래프 시각화")
     v_col1, v_col2, v_col3 = st.columns(3)
-    
-    with v_col1:
-        x_axis = st.selectbox("X축 선택", df.columns)
-    with v_col2:
-        y_axis = st.selectbox("Y축 선택 (선택)", [None] + list(df.columns))
-    with v_col3:
-        plot_type = st.selectbox("그래프 유형", 
-                                 ["Histogram", "Box Plot", "Scatter Plot", "Bar Chart", "Line Chart"])
+    with v_col1: x_axis = st.selectbox("X축 선택", df.columns)
+    with v_col2: y_axis = st.selectbox("Y축 선택 (선택)", [None] + list(df.columns))
+    with v_col3: plot_type = st.selectbox("그래프 유형", ["Histogram", "Box Plot", "Scatter Plot", "Bar Chart", "Line Chart"])
 
     if st.button("그래프 그리기"):
         fig, ax = plt.subplots(figsize=(10, 5))
         try:
-            if plot_type == "Histogram":
-                sns.histplot(data=df, x=x_axis, hue=target_col, kde=True, ax=ax)
-            elif plot_type == "Box Plot":
-                sns.boxplot(data=df, x=x_axis, y=y_axis, ax=ax)
+            if plot_type == "Histogram": sns.histplot(data=df, x=x_axis, hue=target_col, kde=True, ax=ax)
+            elif plot_type == "Box Plot": sns.boxplot(data=df, x=x_axis, y=y_axis, ax=ax)
             elif plot_type == "Scatter Plot":
                 if y_axis: sns.scatterplot(data=df, x=x_axis, y=y_axis, hue=target_col, ax=ax)
                 else: st.warning("Y축을 선택하세요.")
@@ -126,10 +121,8 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             elif plot_type == "Line Chart":
                 if y_axis: sns.lineplot(data=df, x=x_axis, y=y_axis, ax=ax)
                 else: st.warning("Y축을 선택하세요.")
-            
             st.pyplot(fig)
-        except Exception as e:
-            st.error(f"오류: {e}")
+        except Exception as e: st.error(f"오류: {e}")
 
     st.markdown("---")
     # ==========================================
@@ -138,15 +131,13 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     st.header("3. 데이터 전처리")
     
     c1, c2, c3 = st.columns(3)
-    handle_na = c1.checkbox("결측치 제거")
+    handle_na = c1.checkbox("결측치 제거", value=True)
     do_scaling = c2.checkbox("스케일링 (StandardScaler)")
     do_encoding = c3.checkbox("원-핫 인코딩")
 
     if st.button("전처리 적용"):
         df_proc = df.copy()
-        
-        if handle_na:
-            df_proc = df_proc.dropna()
+        if handle_na: df_proc = df_proc.dropna()
         
         if do_encoding:
             cat_cols = df_proc.select_dtypes(include=['object', 'category']).columns
@@ -154,16 +145,13 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 df_proc = pd.get_dummies(df_proc, columns=cat_cols, drop_first=True)
         
         if do_scaling:
-            # 타겟 변수 제외하고 스케일링
             num_cols = df_proc.select_dtypes(include=np.number).columns.tolist()
-            if target_col in num_cols:
-                num_cols.remove(target_col)
-            
+            if target_col in num_cols: num_cols.remove(target_col)
             scaler = StandardScaler()
             df_proc[num_cols] = scaler.fit_transform(df_proc[num_cols])
 
         st.session_state['df_processed'] = df_proc
-        st.session_state['recommended_features'] = [] # 전처리가 바뀌면 추천 변수 초기화
+        st.session_state['recommended_features'] = [] 
         st.success("전처리 완료")
         st.dataframe(df_proc.head())
 
@@ -171,45 +159,56 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
 
     st.markdown("---")
     # ==========================================
-    # 4. 특성 선택 (Stepwise)
+    # 4. 특성 선택 (Stepwise) - T-test 연동 수정됨
     # ==========================================
     st.header("4. 특성 선택 (Stepwise Selection)")
-    
-    st.info(f"📍 종속 변수(Y)는 **'{target_col}'**로 고정되어 있습니다.")
+    st.info(f"📍 종속 변수(Y): **'{target_col}'**")
 
-    # 독립 변수 후보군 (타겟 제외)
+    # 독립 변수 후보군 (전체 컬럼 중 타겟 제외)
     feature_candidates = [c for c in current_df.columns if c != target_col]
-    selected_features_pool = st.multiselect("Stepwise 후보 변수 선택", feature_candidates, default=feature_candidates)
+
+    # [핵심] Default 값 결정 로직
+    # 1순위: T-test에서 유의하다고 판명된 변수들 (st.session_state['significant_features'])
+    # 2순위: T-test를 안 돌렸다면 전체 변수
+    
+    default_candidates = []
+    
+    if st.session_state['significant_features']:
+        # T-test 변수 중 현재 데이터프레임(전처리 후)에 실제로 존재하는 것만 필터링
+        default_candidates = [f for f in st.session_state['significant_features'] if f in feature_candidates]
+        st.success(f"✅ T-test 검정 결과, 유의미한 변수 {len(default_candidates)}개가 기본 선택되었습니다.")
+    else:
+        # T-test 안 돌렸으면 전체 선택
+        default_candidates = feature_candidates
+
+    selected_features_pool = st.multiselect(
+        "Stepwise 후보 변수 선택", 
+        options=feature_candidates, 
+        default=default_candidates
+    )
 
     if st.button("전진 선택법(Stepwise) 실행"):
         if not selected_features_pool:
             st.warning("변수를 선택하세요.")
         else:
-            # 1. X, y 준비
             X_temp = current_df[selected_features_pool]
             y_temp = current_df[target_col]
-
-            # y 인코딩
+            
             le = LabelEncoder()
             y_encoded = le.fit_transform(y_temp)
 
             try:
-                # 2. 모델 설정
                 model_sel = LogisticRegression(solver='liblinear') 
-                
-                # 3. Stepwise 실행
                 sfs = SequentialFeatureSelector(model_sel, direction='forward', n_features_to_select='auto')
                 
                 with st.spinner("최적 변수 탐색 중..."):
                     sfs.fit(X_temp, y_encoded)
                 
-                # 4. 결과 도출
                 selected_mask = sfs.get_support()
                 recommended = np.array(selected_features_pool)[selected_mask]
                 
-                # [핵심] 결과를 세션 상태에 저장하여 아래쪽 위젯에 반영
+                # 결과 저장
                 st.session_state['recommended_features'] = list(recommended)
-
                 st.success(f"추천 변수 ({len(recommended)}개): {', '.join(recommended)}")
                 st.info("👇 아래 '최종 독립 변수 선택' 란에 자동으로 반영되었습니다.")
                 
@@ -218,23 +217,19 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
 
     st.markdown("---")
     # ==========================================
-    # 5 & 6. 데이터 나누기 / 모델 구축
+    # 5 & 6. 최종 모델링 - Stepwise 연동
     # ==========================================
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
 
     c_final1, c_final2 = st.columns(2)
 
-    # [핵심] Stepwise 결과가 있으면 그것을 default로 사용, 없으면 전체 후보 사용 (또는 빈 리스트)
-    # default 값은 반드시 options 리스트 안에 있어야 하므로 교집합을 구함
-    default_selection = [f for f in st.session_state['recommended_features'] if f in feature_candidates]
-    
-    # 만약 Stepwise를 아직 안 돌렸다면(리스트가 비었다면), 기본적으로 사용자가 선택하기 편하게 비워두거나 전체를 둘 수 있음.
-    # 여기서는 "자동 선택" 느낌을 위해, Stepwise 전에는 비워두고, Stepwise 후에는 채워지도록 함.
+    # Stepwise 결과가 있으면 Default로 사용
+    final_default = [f for f in st.session_state['recommended_features'] if f in feature_candidates]
     
     final_features = c_final1.multiselect(
         "최종 독립 변수 선택", 
         options=feature_candidates,
-        default=default_selection
+        default=final_default
     )
     
     test_size = c_final2.slider("Test Size", 0.1, 0.5, 0.2)
@@ -246,21 +241,17 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             X = current_df[final_features]
             y = current_df[target_col]
 
-            # 학습시에도 인코딩 적용
             le_final = LabelEncoder()
             y_encoded_final = le_final.fit_transform(y)
 
-            # Split
             X_train, X_test, y_train, y_test = train_test_split(X, y_encoded_final, test_size=test_size, random_state=42)
 
-            # Model Fit
             model = LogisticRegression(max_iter=3000)
             model.fit(X_train, y_train)
             
             y_pred = model.predict(X_test)
             y_proba = model.predict_proba(X_test)[:, 1]
 
-            # Metrics
             st.subheader("모델 성능")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
@@ -268,10 +259,8 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             m3.metric("Recall", f"{recall_score(y_test, y_pred, zero_division=0):.4f}")
             m4.metric("F1 Score", f"{f1_score(y_test, y_pred, zero_division=0):.4f}")
 
-            # Plots
             st.subheader("시각화")
             gc1, gc2 = st.columns(2)
-            
             with gc1:
                 st.write("**Confusion Matrix**")
                 cm = confusion_matrix(y_test, y_pred)
@@ -279,7 +268,6 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 fig_cm, ax_cm = plt.subplots()
                 disp.plot(cmap='Blues', ax=ax_cm)
                 st.pyplot(fig_cm)
-            
             with gc2:
                 st.write("**ROC Curve**")
                 fpr, tpr, _ = roc_curve(y_test, y_proba)
