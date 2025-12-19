@@ -14,14 +14,18 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.feature_selection import SequentialFeatureSelector
 
 # 페이지 설정
-st.set_page_config(page_title="로짓 모형 분석기 (Fixed Y)", layout="wide")
+st.set_page_config(page_title="로짓 모형 분석기 (Auto Selection)", layout="wide")
 
-st.title("📊 Logistic Regression Tool (Target: not.fully.paid)")
+st.title("📊 Logistic Regression Tool (Auto Stepwise Link)")
 st.markdown("---")
 
-# 세션 상태 초기화
+# ==========================================
+# 세션 상태 초기화 (데이터 및 자동 선택 변수 저장용)
+# ==========================================
 if 'df' not in st.session_state:
     st.session_state['df'] = None
+if 'recommended_features' not in st.session_state:
+    st.session_state['recommended_features'] = [] # Stepwise 결과 저장용
 
 # ==========================================
 # 1. 데이터 업로드
@@ -110,7 +114,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
         fig, ax = plt.subplots(figsize=(10, 5))
         try:
             if plot_type == "Histogram":
-                sns.histplot(data=df, x=x_axis, hue=target_col, kde=True, ax=ax) # hue에 타겟 적용하여 구분
+                sns.histplot(data=df, x=x_axis, hue=target_col, kde=True, ax=ax)
             elif plot_type == "Box Plot":
                 sns.boxplot(data=df, x=x_axis, y=y_axis, ax=ax)
             elif plot_type == "Scatter Plot":
@@ -159,6 +163,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             df_proc[num_cols] = scaler.fit_transform(df_proc[num_cols])
 
         st.session_state['df_processed'] = df_proc
+        st.session_state['recommended_features'] = [] # 전처리가 바뀌면 추천 변수 초기화
         st.success("전처리 완료")
         st.dataframe(df_proc.head())
 
@@ -166,7 +171,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
 
     st.markdown("---")
     # ==========================================
-    # 4. 특성 선택 (Stepwise) - 오류 수정됨
+    # 4. 특성 선택 (Stepwise)
     # ==========================================
     st.header("4. 특성 선택 (Stepwise Selection)")
     
@@ -184,7 +189,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             X_temp = current_df[selected_features_pool]
             y_temp = current_df[target_col]
 
-            # [핵심 수정] y를 무조건 정수형(Label)으로 변환하여 'continuous' 오류 방지
+            # y 인코딩
             le = LabelEncoder()
             y_encoded = le.fit_transform(y_temp)
 
@@ -196,13 +201,17 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 sfs = SequentialFeatureSelector(model_sel, direction='forward', n_features_to_select='auto')
                 
                 with st.spinner("최적 변수 탐색 중..."):
-                    sfs.fit(X_temp, y_encoded) # 인코딩된 y 사용
+                    sfs.fit(X_temp, y_encoded)
                 
                 # 4. 결과 도출
                 selected_mask = sfs.get_support()
-                recommended_features = np.array(selected_features_pool)[selected_mask]
+                recommended = np.array(selected_features_pool)[selected_mask]
                 
-                st.success(f"추천 변수 ({len(recommended_features)}개): {', '.join(recommended_features)}")
+                # [핵심] 결과를 세션 상태에 저장하여 아래쪽 위젯에 반영
+                st.session_state['recommended_features'] = list(recommended)
+
+                st.success(f"추천 변수 ({len(recommended)}개): {', '.join(recommended)}")
+                st.info("👇 아래 '최종 독립 변수 선택' 란에 자동으로 반영되었습니다.")
                 
             except Exception as e:
                 st.error(f"오류 발생: {e}")
@@ -214,7 +223,20 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
 
     c_final1, c_final2 = st.columns(2)
-    final_features = c_final1.multiselect("최종 독립 변수 선택", feature_candidates)
+
+    # [핵심] Stepwise 결과가 있으면 그것을 default로 사용, 없으면 전체 후보 사용 (또는 빈 리스트)
+    # default 값은 반드시 options 리스트 안에 있어야 하므로 교집합을 구함
+    default_selection = [f for f in st.session_state['recommended_features'] if f in feature_candidates]
+    
+    # 만약 Stepwise를 아직 안 돌렸다면(리스트가 비었다면), 기본적으로 사용자가 선택하기 편하게 비워두거나 전체를 둘 수 있음.
+    # 여기서는 "자동 선택" 느낌을 위해, Stepwise 전에는 비워두고, Stepwise 후에는 채워지도록 함.
+    
+    final_features = c_final1.multiselect(
+        "최종 독립 변수 선택", 
+        options=feature_candidates,
+        default=default_selection
+    )
+    
     test_size = c_final2.slider("Test Size", 0.1, 0.5, 0.2)
 
     if st.button("모델 학습 및 평가"):
@@ -224,7 +246,7 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             X = current_df[final_features]
             y = current_df[target_col]
 
-            # [핵심 수정] 학습시에도 안전하게 인코딩 적용
+            # 학습시에도 인코딩 적용
             le_final = LabelEncoder()
             y_encoded_final = le_final.fit_transform(y)
 
