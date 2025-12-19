@@ -216,26 +216,26 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
                 st.error(f"오류 발생: {e}")
 
 
+    # ... (4번 Stepwise 까지 동일) ...
+
     st.markdown("---")
     # ==========================================
-    # 5 & 6. 최종 모델링 (SMOTE + 확률 분포 확인)
+    # 5 & 6. 최종 모델링 (샘플링 방식 선택 기능 추가)
     # ==========================================
     st.header("5 & 6. 최종 변수 선택 및 모델 평가")
 
-    # imblearn 라이브러리 체크
-    # ... import 부분 ...
+    # 라이브러리 로드
     try:
         from imblearn.over_sampling import SMOTE
-    except ImportError:
-        st.error("⚠️ imbalanced-learn 설치 오류가 해결되지 않았습니다.")
+        from imblearn.under_sampling import RandomUnderSampler
+    except Exception as e:
+        st.error(f"라이브러리 로드 실패: {e}")
         st.stop()
-
-# ... 나머지 코드 ...
 
     c_final1, c_final2 = st.columns(2)
 
     # Stepwise 결과가 있으면 Default로 사용
-    final_default = [f for f in st.session_state['recommended_features'] if f in feature_candidates]
+    final_default = [f for f in st.session_state.get('recommended_features', []) if f in feature_candidates]
     
     final_features = c_final1.multiselect(
         "최종 독립 변수 선택", 
@@ -248,13 +248,10 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
     st.subheader("⚙️ 불균형 데이터 처리 옵션")
     h1, h2, h3 = st.columns(3)
     
-    # 1. SMOTE 사용 여부
-    use_smote = h1.checkbox("SMOTE 오버샘플링 적용", value=True, 
-                            help="가장 강력한 방법입니다. 학습 데이터의 소수 클래스(1)를 가상으로 생성하여 비율을 맞춥니다.")
+    # [NEW] 샘플링 방식 선택 라디오 버튼
+    sampling_method = h1.radio("샘플링 방식 선택", ["적용 안 함", "SMOTE (오버샘플링)", "Under-sampling (언더샘플링)"])
     
-    # 2. 임계값 설정
-    threshold = h2.slider("분류 임계값 (Threshold)", 0.0, 1.0, 0.5, 0.01,
-                          help="확률이 이 값보다 크면 1(부도)로 예측합니다.")
+    threshold = h2.slider("분류 임계값 (Threshold)", 0.0, 1.0, 0.5, 0.01)
 
     if st.button("모델 학습 및 평가"):
         if not final_features:
@@ -263,39 +260,38 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             X = current_df[final_features]
             y = current_df[target_col]
 
-            # 인코딩
             le_final = LabelEncoder()
             y_encoded_final = le_final.fit_transform(y)
 
             # 1. Train/Test Split
             X_train, X_test, y_train, y_test = train_test_split(X, y_encoded_final, test_size=test_size, random_state=42)
 
-            # 2. SMOTE 적용 (학습 데이터에만!)
-            if use_smote:
-                smote = SMOTE(random_state=42)
-                X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
-                st.info(f"⚡ SMOTE 적용 완료: 학습 데이터가 {len(y_train)}개에서 {len(y_train_res)}개로 증가했습니다. (비율 1:1)")
-            else:
+            # 2. 샘플링 적용 (학습 데이터에만!)
+            if sampling_method == "SMOTE (오버샘플링)":
+                sampler = SMOTE(random_state=42)
+                X_train_res, y_train_res = sampler.fit_resample(X_train, y_train)
+                st.info(f"⚡ SMOTE 적용: 데이터가 {len(y_train)}개 -> {len(y_train_res)}개로 늘어났습니다.")
+                
+            elif sampling_method == "Under-sampling (언더샘플링)":
+                sampler = RandomUnderSampler(random_state=42)
+                X_train_res, y_train_res = sampler.fit_resample(X_train, y_train)
+                st.warning(f"✂️ 언더샘플링 적용: 데이터가 {len(y_train)}개 -> {len(y_train_res)}개로 줄어들었습니다.")
+                
+            else: # 적용 안 함
                 X_train_res, y_train_res = X_train, y_train
+                st.text("샘플링 미적용 (원본 데이터 사용)")
 
             # 3. 모델 학습
-            model = LogisticRegression(max_iter=5000) # SMOTE 쓰면 class_weight는 굳이 안써도 됨
+            model = LogisticRegression(max_iter=5000)
             model.fit(X_train_res, y_train_res)
             
-            # 4. 예측 (확률값 추출)
+            # 4. 예측
             y_proba = model.predict_proba(X_test)[:, 1]
-            
-            # 5. 사용자 지정 임계값 적용
             y_pred = (y_proba >= threshold).astype(int)
 
             # --- 결과 출력 ---
             st.subheader("모델 성능")
             
-            # 실제 Test 데이터에 1이 몇 개인지 확인 (디버깅용)
-            unique, counts = np.unique(y_test, return_counts=True)
-            test_ratio = dict(zip(unique, counts))
-            st.caption(f"📌 검증 데이터(Test Set) 실제 분포: {test_ratio} (여기서 1이 너무 적으면 수치가 잘 안 나올 수 있습니다)")
-
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("Accuracy", f"{accuracy_score(y_test, y_pred):.4f}")
             m2.metric("Precision", f"{precision_score(y_test, y_pred, zero_division=0):.4f}")
@@ -305,17 +301,15 @@ if st.session_state['df'] is not None and 'not.fully.paid' in st.session_state['
             # --- 시각화 ---
             st.subheader("시각화 및 진단")
             
-            # [NEW] 확률 분포 히스토그램 (이게 중요합니다!)
-            st.write("#### 1. 예측 확률 분포 (Probability Histogram)")
-            st.caption("모델이 예측한 확률값들이 어디에 몰려있는지 확인하세요. 빨간선은 현재 설정한 임계값입니다.")
-            
+            # 히스토그램
+            st.write("#### 1. 예측 확률 분포")
             fig_hist, ax_hist = plt.subplots(figsize=(10, 3))
             sns.histplot(y_proba, bins=50, kde=True, ax=ax_hist, color='skyblue')
             ax_hist.axvline(threshold, color='red', linestyle='--', label=f'Threshold: {threshold}')
-            ax_hist.set_xlabel("Predicted Probability (Score)")
             ax_hist.legend()
             st.pyplot(fig_hist)
             
+            # Confusion Matrix
             gc1, gc2 = st.columns(2)
             with gc1:
                 st.write("#### 2. Confusion Matrix")
